@@ -1,4 +1,5 @@
 import requests
+import logging
 from bs4 import BeautifulSoup
 from requests.compat import urljoin
 from requests.compat import urlparse
@@ -14,109 +15,140 @@ app = Flask(__name__)
 app.config["DEBUG"] = True
 
 
-def web(page,WebUrl,domain):
-    count = 0
+# Here to Create a custom logger
+logger = logging.getLogger(__name__)
+
+# Creating handlers here
+console_handler = logging.StreamHandler()
+file_handler = logging.FileHandler('Debug.log','w')
+console_handler.setLevel(logging.WARNING)
+file_handler.setLevel(logging.ERROR)
+
+
+# Here Creating formatter & adding it to the handlers
+console_format = logging.Formatter('%(name)s - %(levelname)s - %(message)s')
+file_format = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+console_handler.setFormatter(console_format)
+file_handler.setFormatter(file_format)
+
+# Here Adding handler to logger
+logger.addHandler(console_handler)
+logger.addHandler(file_handler)
+
+
+
+#Function definition to crawl website
+def crawlweb(page, WebUrl, domain):
+
     myjson={}
     myjson[WebUrl]={}
 
+    #list of path is an array of paths crawler has return
     listofpaths=[]
-    differentdomain=[]
+
+    #different domain is an array of paths which comes under different domain than the requested domain
+    different_domain_lists=[]
 
     if(page>0):
+
+        #url has the webURL to crawl
         url = WebUrl
+
         try:
+            #code receives the output of the requested URL
             code = requests.get(url)
         except:
             print("I couldn't fetch the URL ! Please check the URL")
             errorresponse=["I couldn't fetch this URL. Please check the url!"]
+            logging.error("Unable to fetch URL!")
             return errorresponse
 
-        # print(code)
+        # Converting it to plain text to parse
         plain = code.text
         # print(plain)
+
+        #variable s stores the parsed HTML
         s = BeautifulSoup(plain, "html.parser")
-        # print(s)
 
+        #Finding links in the requested URL using anchor tag
         for link in s.findAll('a'):
-            print("..................")
-            # tet = link.get('title')
-            # print(tet)
             tet_2 = link.get('href')
-            # print(tet_2)
-            # print(urljoin(tet_2, '.'))
-            # print(urlparse(tet_2))
-            myvalue=urlparse(tet_2)
-            print(myvalue)
-            appendwww="www."+domain
-            print(appendwww)
-            if myvalue[1] == domain or myvalue[1] == '' or myvalue[1] == '/' or myvalue[1] == appendwww:
-                print(myvalue[2])
-                listofpaths.append(myvalue[2])
+
+            extractedURLvalue=urlparse(tet_2)
+
+            append_www="www."+domain
+            if extractedURLvalue[1] == domain or extractedURLvalue[1] == '' or extractedURLvalue[1] == '/' or extractedURLvalue[1] == append_www:
+                listofpaths.append(extractedURLvalue[2])
             else:
-                differentdomain.append(myvalue[1]+myvalue[2])
+                different_domain_lists.append(extractedURLvalue[1]+extractedURLvalue[2])
 
 
+        #Removing empty values
         while '' in listofpaths:
             listofpaths.remove('')
 
-        print(listofpaths)
-        finalset=set(listofpaths)
-        print(finalset)
+        consolidatedPaths=set(listofpaths)
 
-        print(len(listofpaths))
-        print(len(finalset))
-        count = count + 1
+        listOfConsolidatedPaths= list(consolidatedPaths)
+        if(len(listOfConsolidatedPaths)==0 and len(different_domain_lists) > 0):
+            listOfConsolidatedPaths=different_domain_lists
+
+        return listOfConsolidatedPaths
 
 
-
-        print(count)
-        # mydict={"content":finalset}
-
-        listoffinalset= list(finalset)
-        if(len(listoffinalset)==0):
-            listoffinalset=differentdomain
-
-        return listoffinalset
-
+#Receives POST request and crawls it
 
 @app.route('/sitemap',methods = ['GET', 'POST'])
 def login():
    if request.method == 'POST':
       print("Request received at "+str(datetime.now()))
+      logging.info('Request received')
+
       url = request.get_json()
       if 'url' not in url:
-          raise ValueError("Please pass the URL in the payload")
+          #raise ValueError("Please pass the URL in the payload")
 
           data = {"error":"Please pass the URL in the payload"}
-          js = json.dumps(data)
+          logging.error("User has not passed URL in payload")
+          #js = json.dumps(data)
 
-          resp = Response(js, status=400, mimetype='application/json')
-          return resp
+          #resp = Response(js, status=400, mimetype='application/json')
+          return jsonify(data)
 
+      #my URL get the URL user requested
       myurl = url['url']
-      parsevalue = urlparse(myurl)
-      print(parsevalue)
+      parsedURLValue = urlparse(myurl)
 
-      domain = parsevalue[1]
-      protocal = parsevalue[0]
-      domainname=parsevalue[1]
-      if(parsevalue[0]==''):
-          protocal='http'
-          domainname=parsevalue[2]
-          domain=parsevalue[2]
+      domain_name = parsedURLValue[1]
+      protocalType = parsedURLValue[0]
+      domainname=parsedURLValue[1]
+      if(parsedURLValue[0]==''):
+          protocalType='http'
+          domainname=parsedURLValue[2]
+          domain_name=parsedURLValue[2]
+
+      actualURL = protocalType + "://" + domainname
 
 
+      #calling webcrawl function
+      logging.info("Crawling starts...!")
+      try:
+        finalresponse=crawlweb(1, actualURL, domain_name)
+      except:
+          finalresponse=["Internal Server Error!"]
+          logging.error("Crawler call failed")
+          print(finalresponse)
+          return jsonify(finalresponse)
 
-      actualURL = protocal + "://" + domainname
-
-      finalresponse=web(1, actualURL, domain)
-
+      logging.info("Response sent")
+      #returns list of paths that domain user requested
       return jsonify(finalresponse)
-   else:
-      my_dict = {'name': 'John', '1': [2, 4, 3]}
 
-      return jsonify(my_dict)
+   else:
+
+      #If the request is get method, notifying user!
+      return "There is no GET method available!"
 
 if __name__ == '__main__':
-   app.run(host='0.0.0.0')
+   app.run(host='0.0.0.0',port=5000)
 
